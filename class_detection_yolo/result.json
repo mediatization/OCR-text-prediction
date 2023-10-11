@@ -1,0 +1,30 @@
+[
+{
+ "frame_id":1, 
+ "filename":"C:/Users/being/Downloads/Invoice_pro/class_detection_yolo/images/2.png", 
+ "objects": [ 
+  {"class_id":2, "name":"Amount", "relative_coordinates":{"center_x":0.857323, "center_y":0.754845, "width":0.078520, "height":0.036373}, "confidence":0.949160}, 
+  {"class_id":1, "name":"Date", "relative_coordinates":{"center_x":0.496628, "center_y":0.278055, "width":0.208654, "height":0.041217}, "confidence":0.929199}, 
+  {"class_id":0, "name":"Invoice Number", "relative_coordinates":{"center_x":0.203981, "center_y":0.274529, "width":0.131017, "height":0.035999}, "confidence":0.984152}
+ ] 
+}, 
+{
+ "frame_id":2, 
+ "filename":"C:/Users/being/Downloads/Invoice_pro/class_detection_yolo/images/3.png", 
+ "objects": [ 
+  {"class_id":2, "name":"Amount", "relative_coordinates":{"center_x":0.891314, "center_y":0.207571, "width":0.120336, "height":0.046307}, "confidence":0.733826}, 
+  {"class_id":1, "name":"Date", "relative_coordinates":{"center_x":0.904195, "center_y":0.145276, "width":0.105567, "height":0.031509}, "confidence":0.559686}, 
+  {"class_id":0, "name":"Invoice Number", "relative_coordinates":{"center_x":0.908543, "center_y":0.067593, "width":0.109430, "height":0.046227}, "confidence":0.884719}
+ ] 
+}, 
+{
+ "frame_id":3, 
+ "filename":"C:/Users/being/Downloads/Invoice_pro/class_detection_yolo/images/1.png", 
+ "objects": [ 
+  {"class_id":2, "name":"Amount", "relative_coordinates":{"center_x":0.829320, "center_y":0.288393, "width":0.239487, "height":0.040028}, "confidence":0.987508}, 
+  {"class_id":1, "name":"Date", "relative_coordinates":{"center_x":0.359023, "center_y":0.278809, "width":0.113192, "height":0.020172}, "confidence":0.990455}, 
+  {"class_id":1, "name":"Date", "relative_coordinates":{"center_x":0.361282, "center_y":0.340099, "width":0.110597, "height":0.022876}, "confidence":0.987168}, 
+  {"class_id":0, "name":"Invoice Number", "relative_coordinates":{"center_x":0.547487, "center_y":0.279378, "width":0.086681, "height":0.020003}, "confidence":0.993167}
+ ] 
+}
+]

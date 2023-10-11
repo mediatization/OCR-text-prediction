@@ -1,0 +1,3 @@
+/content/images/one.png
+/content/images/two.png
+/content/images/three.png

@@ -1,0 +1,3 @@
+invoice_number
+date
+amount
