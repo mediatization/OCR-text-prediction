@@ -23,6 +23,7 @@ CURSOR_GRAB = Qt.OpenHandCursor
 
 class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
+    lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
     selectionChanged = pyqtSignal(bool)
@@ -31,7 +32,7 @@ class Canvas(QWidget):
 
     CREATE, EDIT = list(range(2))
 
-    epsilon = 11.0
+    epsilon = 24.0
 
     def __init__(self, *args, **kwargs):
         super(Canvas, self).__init__(*args, **kwargs)
@@ -47,6 +48,7 @@ class Canvas(QWidget):
         self.prev_point = QPointF()
         self.offsets = QPointF(), QPointF()
         self.scale = 1.0
+        self.overlay_color = None
         self.label_font_size = 8
         self.pixmap = QPixmap()
         self.visible = {}
@@ -97,10 +99,11 @@ class Canvas(QWidget):
         self.prev_point = QPointF()
         self.repaint()
 
-    def un_highlight(self):
-        if self.h_shape:
-            self.h_shape.highlight_clear()
-        self.h_vertex = self.h_shape = None
+    def un_highlight(self, shape=None):
+        if shape == None or shape == self.h_shape:
+            if self.h_shape:
+                self.h_shape.highlight_clear()
+            self.h_vertex = self.h_shape = None
 
     def selected_vertex(self):
         return self.h_vertex is not None
@@ -178,17 +181,32 @@ class Canvas(QWidget):
                 self.bounded_move_vertex(pos)
                 self.shapeMoved.emit()
                 self.repaint()
+
+                # Display annotation width and height while moving vertex
+                point1 = self.h_shape[1]
+                point3 = self.h_shape[3]
+                current_width = abs(point1.x() - point3.x())
+                current_height = abs(point1.y() - point3.y())
+                self.parent().window().label_coordinates.setText(
+                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
             elif self.selected_shape and self.prev_point:
                 self.override_cursor(CURSOR_MOVE)
                 self.bounded_move_shape(self.selected_shape, pos)
                 self.shapeMoved.emit()
                 self.repaint()
+
+                # Display annotation width and height while moving shape
+                point1 = self.selected_shape[1]
+                point3 = self.selected_shape[3]
+                current_width = abs(point1.x() - point3.x())
+                current_height = abs(point1.y() - point3.y())
+                self.parent().window().label_coordinates.setText(
+                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
             else:
                 # pan
-                delta_x = pos.x() - self.pan_initial_pos.x()
-                delta_y = pos.y() - self.pan_initial_pos.y()
-                self.scrollRequest.emit(delta_x, Qt.Horizontal)
-                self.scrollRequest.emit(delta_y, Qt.Vertical)
+                delta = ev.pos() - self.pan_initial_pos
+                self.scrollRequest.emit(delta.x(), Qt.Horizontal)
+                self.scrollRequest.emit(delta.y(), Qt.Vertical)
                 self.update()
             return
 
@@ -197,7 +215,8 @@ class Canvas(QWidget):
         # - Highlight vertex
         # Update shape/vertex fill and tooltip value accordingly.
         self.setToolTip("Image")
-        for shape in reversed([s for s in self.shapes if self.isVisible(s)]):
+        priority_list = self.shapes + ([self.selected_shape] if self.selected_shape else [])
+        for shape in reversed([s for s in priority_list if self.isVisible(s)]):
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
             index = shape.nearest_vertex(pos, self.epsilon)
@@ -220,6 +239,14 @@ class Canvas(QWidget):
                 self.setStatusTip(self.toolTip())
                 self.override_cursor(CURSOR_GRAB)
                 self.update()
+
+                # Display annotation width and height while hovering inside
+                point1 = self.h_shape[1]
+                point3 = self.h_shape[3]
+                current_width = abs(point1.x() - point3.x())
+                current_height = abs(point1.y() - point3.y())
+                self.parent().window().label_coordinates.setText(
+                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
                 break
         else:  # Nothing found, clear highlights, reset state.
             if self.h_shape:
@@ -241,7 +268,7 @@ class Canvas(QWidget):
                 if selection is None:
                     # pan
                     QApplication.setOverrideCursor(QCursor(Qt.OpenHandCursor))
-                    self.pan_initial_pos = pos
+                    self.pan_initial_pos = ev.pos()
 
         elif ev.button() == Qt.RightButton and self.editing():
             self.select_shape_point(pos)
@@ -439,6 +466,7 @@ class Canvas(QWidget):
     def delete_selected(self):
         if self.selected_shape:
             shape = self.selected_shape
+            self.un_highlight(shape)
             self.shapes.remove(self.selected_shape)
             self.selected_shape = None
             self.update()
@@ -477,7 +505,15 @@ class Canvas(QWidget):
         p.scale(self.scale, self.scale)
         p.translate(self.offset_to_center())
 
-        p.drawPixmap(0, 0, self.pixmap)
+        temp = self.pixmap
+        if self.overlay_color:
+            temp = QPixmap(self.pixmap)
+            painter = QPainter(temp)
+            painter.setCompositionMode(painter.CompositionMode_Overlay)
+            painter.fillRect(temp.rect(), self.overlay_color)
+            painter.end()
+
+        p.drawPixmap(0, 0, temp)
         Shape.scale = self.scale
         Shape.label_font_size = self.label_font_size
         for shape in self.shapes:
@@ -499,19 +535,12 @@ class Canvas(QWidget):
             p.setPen(self.drawing_rect_color)
             brush = QBrush(Qt.BDiagPattern)
             p.setBrush(brush)
-            p.drawRect(left_top.x(), left_top.y(), rect_width, rect_height)
-
-            # You can replace
-            # from p.drawLine(self.prev_point.x(), 0, self.prev_point.x(), self.pixmap.height())
-            # to p.drawLine(int(self.prev_point.x()), 0, int(self.prev_point.x()), int(self.pixmap.height()))
-            # due to values which are float.
+            p.drawRect(int(left_top.x()), int(left_top.y()), int(rect_width), int(rect_height))
 
         if self.drawing() and not self.prev_point.isNull() and not self.out_of_pixmap(self.prev_point):
             p.setPen(QColor(0, 0, 0))
-            # p.drawLine(self.prev_point.x(), 0, self.prev_point.x(), self.pixmap.height())
             p.drawLine(int(self.prev_point.x()), 0, int(self.prev_point.x()), int(self.pixmap.height()))
-            p.drawLine(0, int(self.prev_point.y()), self.pixmap.width(), int(self.prev_point.y()))
-    
+            p.drawLine(0, int(self.prev_point.y()), int(self.pixmap.width()), int(self.prev_point.y()))
 
         self.setAutoFillBackground(True)
         if self.verified:
@@ -588,7 +617,9 @@ class Canvas(QWidget):
             v_delta = delta.y()
 
         mods = ev.modifiers()
-        if Qt.ControlModifier == int(mods) and v_delta:
+        if int(Qt.ControlModifier) | int(Qt.ShiftModifier) == int(mods) and v_delta:
+            self.lightRequest.emit(v_delta)
+        elif Qt.ControlModifier == int(mods) and v_delta:
             self.zoomRequest.emit(v_delta)
         else:
             v_delta and self.scrollRequest.emit(v_delta, Qt.Vertical)
@@ -705,6 +736,10 @@ class Canvas(QWidget):
         QApplication.restoreOverrideCursor()
 
     def reset_state(self):
+        self.de_select_shape()
+        self.un_highlight()
+        self.selected_shape_copy = None
+
         self.restore_cursor()
         self.pixmap = None
         self.update()

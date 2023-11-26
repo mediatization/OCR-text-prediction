@@ -2,14 +2,12 @@
 # -*- coding: utf-8 -*-
 import argparse
 import codecs
-import distutils.spawn
 import os.path
 import platform
-import re
+import shutil
 import sys
-import subprocess
+import webbrowser as wb
 from functools import partial
-from collections import defaultdict
 
 try:
     from PyQt5.QtGui import *
@@ -27,6 +25,7 @@ except ImportError:
     from PyQt4.QtCore import *
 
 from libs.combobox import ComboBox
+from libs.default_label_combobox import DefaultLabelComboBox
 from libs.resources import *
 from libs.constants import *
 from libs.utils import *
@@ -35,6 +34,7 @@ from libs.shape import Shape, DEFAULT_LINE_COLOR, DEFAULT_FILL_COLOR
 from libs.stringBundle import StringBundle
 from libs.canvas import Canvas
 from libs.zoomWidget import ZoomWidget
+from libs.lightWidget import LightWidget
 from libs.labelDialog import LabelDialog
 from libs.colorDialog import ColorDialog
 from libs.labelFile import LabelFile, LabelFileError, LabelFileFormat
@@ -82,6 +82,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.settings.load()
         settings = self.settings
 
+        self.os_name = platform.system()
+
         # Load string bundle for i18n
         self.string_bundle = StringBundle.get_bundle()
         get_str = lambda str_id: self.string_bundle.get_string(str_id)
@@ -96,18 +98,22 @@ class MainWindow(QMainWindow, WindowMixin):
         self.label_hist = []
         self.last_open_dir = None
         self.cur_img_idx = 0
-        self.img_count = 1
+        self.img_count = len(self.m_img_list)
 
         # Whether we need to save or not.
         self.dirty = False
 
         self._no_selection_slot = False
         self._beginner = True
-        self.screencast_viewer = self.get_available_screencast_viewer()
         self.screencast = "https://youtu.be/p0nR2YsCY_U"
 
         # Load predefined classes to the list
         self.load_predefined_classes(default_prefdef_class_file)
+
+        if self.label_hist:
+            self.default_label = self.label_hist[0]
+        else:
+            print("Not find:/data/predefined_classes.txt (optional)")
 
         # Main widgets and related state.
         self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
@@ -122,10 +128,11 @@ class MainWindow(QMainWindow, WindowMixin):
         # Create a widget for using default label
         self.use_default_label_checkbox = QCheckBox(get_str('useDefaultLabel'))
         self.use_default_label_checkbox.setChecked(False)
-        self.default_label_text_line = QLineEdit()
+        self.default_label_combo_box = DefaultLabelComboBox(self,items=self.label_hist)
+
         use_default_label_qhbox_layout = QHBoxLayout()
         use_default_label_qhbox_layout.addWidget(self.use_default_label_checkbox)
-        use_default_label_qhbox_layout.addWidget(self.default_label_text_line)
+        use_default_label_qhbox_layout.addWidget(self.default_label_combo_box)
         use_default_label_container = QWidget()
         use_default_label_container.setLayout(use_default_label_qhbox_layout)
 
@@ -174,10 +181,12 @@ class MainWindow(QMainWindow, WindowMixin):
         self.file_dock.setWidget(file_list_container)
 
         self.zoom_widget = ZoomWidget()
+        self.light_widget = LightWidget(get_str('lightWidgetTitle'))
         self.color_dialog = ColorDialog(parent=self)
 
         self.canvas = Canvas(parent=self)
         self.canvas.zoomRequest.connect(self.zoom_request)
+        self.canvas.lightRequest.connect(self.light_request)
         self.canvas.set_drawing_shape_to_square(settings.get(SETTING_DRAW_SQUARE, False))
 
         scroll = QScrollArea()
@@ -245,7 +254,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 return '&CreateML', 'format_createml'
 
         save_format = action(get_format_meta(self.label_file_format)[0],
-                             self.change_format, 'Ctrl+',
+                             self.change_format, 'Ctrl+Y',
                              get_format_meta(self.label_file_format)[1],
                              get_str('changeSaveFormat'), enabled=True)
 
@@ -263,8 +272,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         create_mode = action(get_str('crtBox'), self.set_create_mode,
                              'w', 'new', get_str('crtBoxDetail'), enabled=False)
-        edit_mode = action('&Edit\nRectBox', self.set_edit_mode,
-                           'Ctrl+J', 'edit', u'Move and edit Boxs', enabled=False)
+        edit_mode = action(get_str('editBox'), self.set_edit_mode,
+                           'Ctrl+J', 'edit', get_str('editBoxDetail'), enabled=False)
 
         create = action(get_str('crtBox'), self.create_shape,
                         'w', 'new', get_str('crtBoxDetail'), enabled=False)
@@ -278,15 +287,16 @@ class MainWindow(QMainWindow, WindowMixin):
                                'Ctrl+Shift+A', 'expert', get_str('advancedModeDetail'),
                                checkable=True)
 
-        hide_all = action('&Hide\nRectBox', partial(self.toggle_polygons, False),
+        hide_all = action(get_str('hideAllBox'), partial(self.toggle_polygons, False),
                           'Ctrl+H', 'hide', get_str('hideAllBoxDetail'),
                           enabled=False)
-        show_all = action('&Show\nRectBox', partial(self.toggle_polygons, True),
+        show_all = action(get_str('showAllBox'), partial(self.toggle_polygons, True),
                           'Ctrl+A', 'hide', get_str('showAllBoxDetail'),
                           enabled=False)
 
-        help = action(get_str('tutorial'), self.show_tutorial_dialog, None, 'help', get_str('tutorialDetail'))
+        help_default = action(get_str('tutorialDefault'), self.show_default_tutorial_dialog, None, 'help', get_str('tutorialDetail'))
         show_info = action(get_str('info'), self.show_info_dialog, None, 'help', get_str('info'))
+        show_shortcut = action(get_str('shortcut'), self.show_shortcuts_dialog, None, 'help', get_str('shortcut'))
 
         zoom = QWidgetAction(self)
         zoom.setDefaultWidget(self.zoom_widget)
@@ -319,6 +329,26 @@ class MainWindow(QMainWindow, WindowMixin):
             self.MANUAL_ZOOM: lambda: 1,
         }
 
+        light = QWidgetAction(self)
+        light.setDefaultWidget(self.light_widget)
+        self.light_widget.setWhatsThis(
+            u"Brighten or darken current image. Also accessible with"
+            " %s and %s from the canvas." % (format_shortcut("Ctrl+Shift+[-+]"),
+                                             format_shortcut("Ctrl+Shift+Wheel")))
+        self.light_widget.setEnabled(False)
+
+        light_brighten = action(get_str('lightbrighten'), partial(self.add_light, 10),
+                                'Ctrl+Shift++', 'light_lighten', get_str('lightbrightenDetail'), enabled=False)
+        light_darken = action(get_str('lightdarken'), partial(self.add_light, -10),
+                              'Ctrl+Shift+-', 'light_darken', get_str('lightdarkenDetail'), enabled=False)
+        light_org = action(get_str('lightreset'), partial(self.set_light, 50),
+                           'Ctrl+Shift+=', 'light_reset', get_str('lightresetDetail'), checkable=True, enabled=False)
+        light_org.setChecked(True)
+
+        # Group light controls into a list for easier toggling.
+        light_actions = (self.light_widget, light_brighten,
+                         light_darken, light_org)
+
         edit = action(get_str('editLabel'), self.edit_label,
                       'Ctrl+E', 'edit', get_str('editLabelDetail'),
                       enabled=False)
@@ -343,7 +373,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.pop_label_list_menu)
 
         # Draw squares/rectangles
-        self.draw_squares_option = QAction('Draw Squares', self)
+        self.draw_squares_option = QAction(get_str('drawSquares'), self)
         self.draw_squares_option.setShortcut('Ctrl+Shift+R')
         self.draw_squares_option.setCheckable(True)
         self.draw_squares_option.setChecked(settings.get(SETTING_DRAW_SQUARE, False))
@@ -357,6 +387,8 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoom=zoom, zoomIn=zoom_in, zoomOut=zoom_out, zoomOrg=zoom_org,
                               fitWindow=fit_window, fitWidth=fit_width,
                               zoomActions=zoom_actions,
+                              lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
+                              lightActions=light_actions,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
@@ -396,7 +428,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         add_actions(self.menus.file,
                     (open, open_dir, change_save_dir, open_annotation, copy_prev_bounding, self.menus.recentFiles, save, save_format, save_as, close, reset_all, delete_image, quit))
-        add_actions(self.menus.help, (help, show_info))
+        add_actions(self.menus.help, (help_default, show_info, show_shortcut))
         add_actions(self.menus.view, (
             self.auto_saving,
             self.single_class_mode,
@@ -404,7 +436,8 @@ class MainWindow(QMainWindow, WindowMixin):
             labels, advanced_mode, None,
             hide_all, show_all, None,
             zoom_in, zoom_out, zoom_org, None,
-            fit_window, fit_width))
+            fit_window, fit_width, None,
+            light_brighten, light_darken, light_org))
 
         self.menus.file.aboutToShow.connect(self.update_file_menu)
 
@@ -417,7 +450,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, copy, delete, None,
-            zoom_in, zoom, zoom_out, fit_window, fit_width)
+            zoom_in, zoom, zoom_out, fit_window, fit_width, None,
+            light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
@@ -493,6 +527,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Callbacks:
         self.zoom_widget.valueChanged.connect(self.paint_canvas)
+        self.light_widget.valueChanged.connect(self.paint_canvas)
 
         self.populate_mode_actions()
 
@@ -594,6 +629,8 @@ class MainWindow(QMainWindow, WindowMixin):
         """Enable/Disable widgets which depend on an opened image."""
         for z in self.actions.zoomActions:
             z.setEnabled(value)
+        for z in self.actions.lightActions:
+            z.setEnabled(value)
         for action in self.actions.onLoadActive:
             action.setEnabled(value)
 
@@ -633,24 +670,36 @@ class MainWindow(QMainWindow, WindowMixin):
     def advanced(self):
         return not self.beginner()
 
-    def get_available_screencast_viewer(self):
-        os_name = platform.system()
+    def show_tutorial_dialog(self, browser='default', link=None):
+        if link is None:
+            link = self.screencast
 
-        if os_name == 'Windows':
-            return ['C:\\Program Files\\Internet Explorer\\iexplore.exe']
-        elif os_name == 'Linux':
-            return ['xdg-open']
-        elif os_name == 'Darwin':
-            return ['open']
+        if browser.lower() == 'default':
+            wb.open(link, new=2)
+        elif browser.lower() == 'chrome' and self.os_name == 'Windows':
+            if shutil.which(browser.lower()):  # 'chrome' not in wb._browsers in windows
+                wb.register('chrome', None, wb.BackgroundBrowser('chrome'))
+            else:
+                chrome_path="D:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+                if os.path.isfile(chrome_path):
+                    wb.register('chrome', None, wb.BackgroundBrowser(chrome_path))
+            try:
+                wb.get('chrome').open(link, new=2)
+            except:
+                wb.open(link, new=2)
+        elif browser.lower() in wb._browsers:
+            wb.get(browser.lower()).open(link, new=2)
 
-    # Callbacks #
-    def show_tutorial_dialog(self):
-        subprocess.Popen(self.screencast_viewer + [self.screencast])
+    def show_default_tutorial_dialog(self):
+        self.show_tutorial_dialog(browser='default')
 
     def show_info_dialog(self):
         from libs.__init__ import __version__
         msg = u'Name:{0} \nApp Version:{1} \n{2} '.format(__appname__, __version__, sys.version_info)
         QMessageBox.information(self, u'Information', msg)
+
+    def show_shortcuts_dialog(self):
+        self.show_tutorial_dialog(browser='default', link='https://github.com/tzutalin/labelImg#Hotkeys')
 
     def create_shape(self):
         assert self.beginner()
@@ -883,6 +932,9 @@ class MainWindow(QMainWindow, WindowMixin):
             else:
                 self.label_list.item(i).setCheckState(2)
 
+    def default_label_combo_selection_changed(self, index):
+        self.default_label=self.label_hist[index]
+
     def label_selection_changed(self):
         item = self.current_item()
         if item and self.canvas.editing():
@@ -908,7 +960,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         position MUST be in global coordinates.
         """
-        if not self.use_default_label_checkbox.isChecked() or not self.default_label_text_line.text():
+        if not self.use_default_label_checkbox.isChecked():
             if len(self.label_hist) > 0:
                 self.label_dialog = LabelDialog(
                     parent=self, list_item=self.label_hist)
@@ -920,7 +972,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 text = self.label_dialog.pop_up(text=self.prev_label_text)
                 self.lastLabel = text
         else:
-            text = self.default_label_text_line.text()
+            text = self.default_label
 
         # Add Chris
         self.diffc_button.setChecked(False)
@@ -945,13 +997,15 @@ class MainWindow(QMainWindow, WindowMixin):
     def scroll_request(self, delta, orientation):
         units = - delta / (8 * 15)
         bar = self.scroll_bars[orientation]
-        bar.setValue(bar.value() + bar.singleStep() * units)
+        bar.setValue(int(bar.value() + bar.singleStep() * units))
 
     def set_zoom(self, value):
         self.actions.fitWidth.setChecked(False)
         self.actions.fitWindow.setChecked(False)
         self.zoom_mode = self.MANUAL_ZOOM
-        self.zoom_widget.setValue(value)
+        # Arithmetic on scaling factor often results in float
+        # Convert to int to avoid type errors
+        self.zoom_widget.setValue(int(value))
 
     def add_zoom(self, increment=10):
         self.set_zoom(self.zoom_widget.value() + increment)
@@ -992,7 +1046,7 @@ class MainWindow(QMainWindow, WindowMixin):
         move_y = min(max(move_y, 0), 1)
 
         # zoom in
-        units = delta / (8 * 15)
+        units = delta // (8 * 15)
         scale = 10
         self.add_zoom(scale * units)
 
@@ -1002,11 +1056,14 @@ class MainWindow(QMainWindow, WindowMixin):
         d_v_bar_max = v_bar.maximum() - v_bar_max
 
         # get the new scrollbar values
-        new_h_bar_value = h_bar.value() + move_x * d_h_bar_max
-        new_v_bar_value = v_bar.value() + move_y * d_v_bar_max
+        new_h_bar_value = int(h_bar.value() + move_x * d_h_bar_max)
+        new_v_bar_value = int(v_bar.value() + move_y * d_v_bar_max)
 
         h_bar.setValue(new_h_bar_value)
         v_bar.setValue(new_v_bar_value)
+
+    def light_request(self, delta):
+        self.add_light(5*delta // (8 * 15))
 
     def set_fit_window(self, value=True):
         if value:
@@ -1020,6 +1077,15 @@ class MainWindow(QMainWindow, WindowMixin):
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
         self.adjust_scale()
 
+    def set_light(self, value):
+        self.actions.lightOrg.setChecked(int(value) == 50)
+        # Arithmetic on scaling factor often results in float
+        # Convert to int to avoid type errors
+        self.light_widget.setValue(int(value))
+
+    def add_light(self, increment=10):
+        self.set_light(self.light_widget.value() + increment)
+
     def toggle_polygons(self, value):
         for item, shape in self.items_to_shapes.items():
             item.setCheckState(Qt.Checked if value else Qt.Unchecked)
@@ -1030,7 +1096,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.setEnabled(False)
         if file_path is None:
             file_path = self.settings.get(SETTING_FILENAME)
-
         # Make sure that filePath is a regular python string, rather than QString
         file_path = ustr(file_path)
 
@@ -1058,6 +1123,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                         u"<p>Make sure <i>%s</i> is a valid label file.")
                                        % (e, unicode_file_path))
                     self.status("Error reading %s" % unicode_file_path)
+                    
                     return False
                 self.image_data = self.label_file.image_data
                 self.line_color = QColor(*self.label_file.lineColor)
@@ -1091,7 +1157,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.paint_canvas()
             self.add_recent_file(self.file_path)
             self.toggle_actions(True)
-            self.show_bounding_box_from_annotation_file(file_path)
+            self.show_bounding_box_from_annotation_file(self.file_path)
 
             counter = self.counter_str()
             self.setWindowTitle(__appname__ + ' ' + file_path + ' ' + counter)
@@ -1131,10 +1197,15 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             xml_path = os.path.splitext(file_path)[0] + XML_EXT
             txt_path = os.path.splitext(file_path)[0] + TXT_EXT
+            json_path = os.path.splitext(file_path)[0] + JSON_EXT
+
             if os.path.isfile(xml_path):
                 self.load_pascal_xml_by_filename(xml_path)
             elif os.path.isfile(txt_path):
                 self.load_yolo_txt_by_filename(txt_path)
+            elif os.path.isfile(json_path):
+                self.load_create_ml_json_by_filename(json_path, file_path)
+            
 
     def resizeEvent(self, event):
         if self.canvas and not self.image.isNull()\
@@ -1145,6 +1216,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def paint_canvas(self):
         assert not self.image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoom_widget.value()
+        self.canvas.overlay_color = self.light_widget.color()
         self.canvas.label_font_size = int(0.02 * max(self.image.width(), self.image.height()))
         self.canvas.adjustSize()
         self.canvas.update()
@@ -1234,9 +1306,12 @@ class MainWindow(QMainWindow, WindowMixin):
         if dir_path is not None and len(dir_path) > 1:
             self.default_save_dir = dir_path
 
+        self.show_bounding_box_from_annotation_file(self.file_path)
+
         self.statusBar().showMessage('%s . Annotation will be saved to %s' %
                                      ('Change saved folder', self.default_save_dir))
         self.statusBar().show()
+
 
     def open_annotation_dialog(self, _value=False):
         if self.file_path is None:
@@ -1253,6 +1328,17 @@ class MainWindow(QMainWindow, WindowMixin):
                 if isinstance(filename, (tuple, list)):
                     filename = filename[0]
             self.load_pascal_xml_by_filename(filename)
+
+        elif self.label_file_format == LabelFileFormat.CREATE_ML:
+            
+            filters = "Open Annotation JSON file (%s)" % ' '.join(['*.json'])
+            filename = ustr(QFileDialog.getOpenFileName(self, '%s - Choose a json file' % __appname__, path, filters))
+            if filename:
+                if isinstance(filename, (tuple, list)):
+                    filename = filename[0]
+
+            self.load_create_ml_json_by_filename(filename, self.file_path)         
+        
 
     def open_dir_dialog(self, _value=False, dir_path=None, silent=False):
         if not self.may_continue():
@@ -1271,6 +1357,9 @@ class MainWindow(QMainWindow, WindowMixin):
             target_dir_path = ustr(default_open_dir_path)
         self.last_open_dir = target_dir_path
         self.import_dir_images(target_dir_path)
+        self.default_save_dir = target_dir_path
+        if self.file_path:
+            self.show_bounding_box_from_annotation_file(file_path=self.file_path)
 
     def import_dir_images(self, dir_path):
         if not self.may_continue() or not dir_path:
@@ -1331,7 +1420,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.load_file(filename)
 
     def open_next_image(self, _value=False):
-        # Proceeding prev image without dialog if having any label
+        # Proceeding next image without dialog if having any label
         if self.auto_saving.isChecked():
             if self.default_save_dir is not None:
                 if self.dirty is True:
@@ -1344,6 +1433,9 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         if self.img_count <= 0:
+            return
+        
+        if not self.m_img_list:
             return
 
         filename = None
@@ -1364,7 +1456,7 @@ class MainWindow(QMainWindow, WindowMixin):
         path = os.path.dirname(ustr(self.file_path)) if self.file_path else '.'
         formats = ['*.%s' % fmt.data().decode("ascii").lower() for fmt in QImageReader.supportedImageFormats()]
         filters = "Image & Label files (%s)" % ' '.join(formats + ['*%s' % LabelFile.suffix])
-        filename = QFileDialog.getOpenFileName(self, '%s - Choose Image or Label file' % __appname__, path, filters)
+        filename,_ = QFileDialog.getOpenFileName(self, '%s - Choose Image or Label file' % __appname__, path, filters)
         if filename:
             if isinstance(filename, (tuple, list)):
                 filename = filename[0]
@@ -1427,12 +1519,16 @@ class MainWindow(QMainWindow, WindowMixin):
     def delete_image(self):
         delete_path = self.file_path
         if delete_path is not None:
-            self.open_next_image()
-            self.cur_img_idx -= 1
-            self.img_count -= 1
+            idx = self.cur_img_idx
             if os.path.exists(delete_path):
                 os.remove(delete_path)
             self.import_dir_images(self.last_open_dir)
+            if self.img_count > 0:
+                self.cur_img_idx = min(idx, self.img_count - 1)
+                filename = self.m_img_list[self.cur_img_idx]
+                self.load_file(filename)
+            else:
+                self.close_file()
 
     def reset_all(self):
         self.settings.reset()
@@ -1483,7 +1579,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 action.setEnabled(False)
 
     def choose_shape_line_color(self):
-        color = self.color_dialog.getColor(self.line_color, u'Choose line color',
+        color = self.color_dialog.getColor(self.line_color, u'Choose Line Color',
                                            default=DEFAULT_LINE_COLOR)
         if color:
             self.canvas.selected_shape.line_color = color
@@ -1491,7 +1587,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.set_dirty()
 
     def choose_shape_fill_color(self):
-        color = self.color_dialog.getColor(self.fill_color, u'Choose fill color',
+        color = self.color_dialog.getColor(self.fill_color, u'Choose Fill Color',
                                            default=DEFAULT_FILL_COLOR)
         if color:
             self.canvas.selected_shape.fill_color = color
@@ -1499,6 +1595,9 @@ class MainWindow(QMainWindow, WindowMixin):
             self.set_dirty()
 
     def copy_shape(self):
+        if self.canvas.selected_shape is None:
+            # True if one accidentally touches the left mouse button before releasing
+            return
         self.canvas.end_move(copy=True)
         self.add_label(self.canvas.selected_shape)
         self.set_dirty()
@@ -1583,11 +1682,13 @@ def read(filename, default=None):
         return default
 
 
-def get_main_app(argv=[]):
+def get_main_app(argv=None):
     """
     Standard boilerplate Qt application code.
     Do everything but app.exec_() -- so that we can test the application in one thread
     """
+    if not argv:
+        argv = []
     app = QApplication(argv)
     app.setApplicationName(__appname__)
     app.setWindowIcon(new_icon("app"))

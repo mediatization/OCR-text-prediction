@@ -6,15 +6,13 @@ try:
 except ImportError:
     from PyQt4.QtGui import QImage
 
-from base64 import b64encode, b64decode
-from libs.pascal_voc_io import PascalVocWriter
-from libs.yolo_io import YOLOWriter
-from libs.pascal_voc_io import XML_EXT
-from libs.create_ml_io import CreateMLWriter
-from libs.create_ml_io import JSON_EXT
-from enum import Enum
 import os.path
-import sys
+from enum import Enum
+
+from libs.create_ml_io import CreateMLWriter
+from libs.pascal_voc_io import PascalVocWriter
+from libs.pascal_voc_io import XML_EXT
+from libs.yolo_io import YOLOWriter
 
 
 class LabelFileFormat(Enum):
@@ -50,6 +48,7 @@ class LabelFile(object):
                                 image_shape, shapes, filename, local_img_path=image_path)
         writer.verified = self.verified
         writer.write()
+        return
 
 
     def save_pascal_voc_format(self, filename, shapes, image_path, image_data,

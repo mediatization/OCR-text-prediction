@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+if items were added in files in the resources/strings folder,
+then execute "pyrcc5 resources.qrc -o resources.py" in the root directory
+and execute "pyrcc5 ../resources.qrc -o resources.py" in the libs directory
+"""
 import re
 import os
 import sys
@@ -30,8 +35,8 @@ class StringBundle:
     def get_bundle(cls, locale_str=None):
         if locale_str is None:
             try:
-                locale_str = locale.getlocale()[0] if locale.getlocale() and len(
-                    locale.getlocale()) > 0 else os.getenv('LANG')
+                locale_str = locale.getdefaultlocale()[0] if locale.getdefaultlocale() and len(
+                    locale.getdefaultlocale()) > 0 else os.getenv('LANG')
             except:
                 print('Invalid locale')
                 locale_str = 'en'
