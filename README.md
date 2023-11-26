@@ -13,7 +13,7 @@ For OCR using Tesseract and Yolo, see [tesserract-training](https://github.com/d
 The OCR pipeline has three stages:  In the first stage we use a dataset of digital invoices to train the YOLO object detection model to identify three essential classes from the invoices: Invoice number, Billing Date, and Total amount. After that, we will use Tesseract for performing OCR in python.
 
 ### Application
-Any person currently identifying object classes from images manually as a data source can use this pipeline.
+Any person currently identifying object classes from images manually to be used as labels for data source can use this pipeline.
 
 ### Tech Stack
 Language: Python
