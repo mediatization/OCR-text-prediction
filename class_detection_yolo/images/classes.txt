@@ -17,3 +17,5 @@ date
 amount
 invoice_number
 invoice_num
+
+ -
